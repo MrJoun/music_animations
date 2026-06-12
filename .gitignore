@@ -12,8 +12,7 @@ __pycache__/
 # Node
 node_modules/
 
-# Local song media and generated analysis packs (large / user-specific)
-*.mp3
+# Generated analysis packs and large stem audio (user-specific)
 *.wav
 *.flac
 *.m4a
