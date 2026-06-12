@@ -66,6 +66,31 @@ class AudioEngine {
     this.audioElement.currentTime = 0;
   }
 
+  /** Load audio from a (same-origin) URL served by the backend. */
+  async loadUrl(url) {
+    await this.init();
+    if (this.source) {
+      this.source.disconnect();
+      this.source = null;
+    }
+    if (this.audioElement) {
+      this.audioElement.pause();
+    }
+    this.audioElement = new Audio(url);
+    this.audioElement.crossOrigin = "anonymous";
+    this.audioElement.preload = "auto";
+    await new Promise((resolve, reject) => {
+      this.audioElement.addEventListener("canplaythrough", resolve, { once: true });
+      this.audioElement.addEventListener("error", () => reject(new Error("audio load failed")), { once: true });
+    });
+    this.source = this.context.createMediaElementSource(this.audioElement);
+    this.source.connect(this.gainNode);
+    this.isPlaying = false;
+    this.hasTrack = true;
+    this.beatThreshold = 0;
+    this.audioElement.currentTime = 0;
+  }
+
   async play() {
     await this.init();
     if (!this.audioElement) return;

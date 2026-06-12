@@ -95,10 +95,10 @@ class LyricsManager {
     this._displayLeadSec = 0;
 
     const cacheKey = this._trackCacheKey;
-    if (cacheKey) {
+    if (cacheKey && typeof LyricsCache !== "undefined") {
       LyricsCache.setWordSchedule(cacheKey, this._lyricsFingerprint(), schedule, {
         exact: true,
-        alignVersion: LyricsAligner.ALIGN_VERSION,
+        alignVersion: typeof LyricsAligner !== "undefined" ? LyricsAligner.ALIGN_VERSION : 0,
         whisper: true,
       });
     }
@@ -109,6 +109,31 @@ class LyricsManager {
     this._applyWhisperSchedule(schedule);
     this._fromLocalPack = true;
     return true;
+  }
+
+  /**
+   * Backend-pack karaoke: set lyric lines + the forced-aligned word schedule with no
+   * in-browser analysis. `lines` is [{time, text}] from the pack's lyrics.json; if
+   * omitted, lines are derived from the schedule.
+   */
+  loadFromPack(schedule, lines) {
+    this.clear();
+    this.mode = "timed";
+    this.source = "analysis pack";
+    this.fileName = "analysis pack";
+    const cleaned = (lines || [])
+      .map((e) => ({ time: e.time || 0, text: (e.text || "").trim() }))
+      .filter((e) => e.text);
+    if (cleaned.length) {
+      this.timed = cleaned;
+    } else if (schedule?.length && typeof KaraokeClock !== "undefined") {
+      this.timed = KaraokeClock.buildLinesFromSchedule(schedule).map((text, i) => ({
+        time: 0,
+        text,
+      }));
+    }
+    this.loadWordScheduleFromPack(schedule);
+    return this.hasLines();
   }
 
   setUserSyncOffset(sec) {
@@ -231,6 +256,10 @@ class LyricsManager {
     this._masterSchedule = [];
     this._onsetMapped = false;
     this._exactWordTiming = false;
+
+    // Backend-only build: in-browser alignment/caches are gone. Word timing always comes
+    // from the analysis pack (loadFromPack), so without those modules there's nothing to do.
+    if (typeof LyricsCache === "undefined" || typeof LyricsAligner === "undefined") return;
 
     const timedLines = this._getTimedLines();
     if (!timedLines.length || !this._duration) return;

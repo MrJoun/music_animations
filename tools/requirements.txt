@@ -6,3 +6,10 @@ librosa>=0.10.0
 soundfile>=0.12.0
 numpy>=1.24.0
 matplotlib>=3.7.0
+# Genre / mood / instrument tagging (AudioSet)
+panns-inference>=0.1.1
+# Web backend (GUI) + URL ingest
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+yt-dlp>=2024.0.0
