@@ -75,8 +75,12 @@ def _trim_silence(data: np.ndarray) -> np.ndarray:
     return data[first:last]
 
 
-def _music_bed(n_samples: int) -> np.ndarray:
-    """Simple chord-ish pad + kick so demucs has something to separate out."""
+def _music_bed(n_samples: int, *, rich: bool = False) -> np.ndarray:
+    """Chord pad + kick so demucs has something to separate out.
+
+    ``rich=True`` adds a moving chord progression, a melodic line and hi-hats for a
+    denser mix that bleeds more into the separated vocal stem (closer to a real track).
+    """
     t = np.arange(n_samples) / SR
     bed = np.zeros(n_samples, dtype=np.float32)
     for f in (110.0, 164.81, 220.0):  # A2, E3, A3
@@ -87,10 +91,47 @@ def _music_bed(n_samples: int) -> np.ndarray:
         seg = np.arange(0, min(kick_period, n_samples - k))
         env[k : k + len(seg)] = np.exp(-seg / (SR * 0.12))
     kick = (env * np.sin(2 * np.pi * 55 * t)).astype(np.float32)
-    return bed * 0.5 + kick * 0.6
+    out = bed * 0.5 + kick * 0.6
+    if not rich:
+        return out
+
+    # Moving chords (4-bar loop), a melody line, and hi-hats.
+    chords = [(146.83, 220.0, 293.66), (164.81, 246.94, 329.63),
+              (130.81, 196.0, 261.63), (174.61, 261.63, 349.23)]
+    bar = int(SR * 2.0)
+    pad = np.zeros(n_samples, dtype=np.float32)
+    for k in range(0, n_samples, bar):
+        freqs = chords[(k // bar) % len(chords)]
+        seg = np.arange(0, min(bar, n_samples - k))
+        for f in freqs:
+            pad[k : k + len(seg)] += 0.07 * np.sin(2 * np.pi * f * (seg / SR))
+    hat_period = int(SR * 0.25)
+    hat = np.zeros(n_samples, dtype=np.float32)
+    rng = np.random.default_rng(0)
+    noise = rng.standard_normal(n_samples).astype(np.float32)
+    for k in range(0, n_samples, hat_period):
+        seg = np.arange(0, min(int(SR * 0.05), n_samples - k))
+        hat[k : k + len(seg)] = np.exp(-seg / (SR * 0.02))
+    hats = hat * noise * 0.18
+    return out + pad + hats
 
 
-def build(lyrics_path: Path, out_base: Path, voice: str, wpm: int) -> None:
+def _reverb(signal: np.ndarray, *, decay: float = 0.35, wet: float = 0.3) -> np.ndarray:
+    """Smear word tails with a short decaying-noise impulse response.
+
+    Pre-delay is zero so the attack (and thus the ground-truth onset) stays sharp; only
+    the offsets get blurred, like a real vocal in a mix.
+    """
+    rng = np.random.default_rng(1)
+    ir_len = int(SR * decay)
+    ir = (rng.standard_normal(ir_len).astype(np.float32) * np.exp(-np.arange(ir_len) / (SR * decay / 4)))
+    ir[0] = 1.0
+    wet_sig = np.convolve(signal, ir)[: len(signal)].astype(np.float32)
+    wet_sig /= (np.max(np.abs(wet_sig)) or 1.0)
+    return ((1 - wet) * signal + wet * wet_sig).astype(np.float32)
+
+
+def build(lyrics_path: Path, out_base: Path, voice: str, wpm: int, *, hard: bool = False) -> None:
     lines = [
         _strip_lrc(raw)
         for raw in lyrics_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -135,12 +176,15 @@ def build(lyrics_path: Path, out_base: Path, voice: str, wpm: int) -> None:
 
     vocals = np.concatenate(timeline) if timeline else np.zeros(SR, dtype=np.float32)
     vocals = vocals / (np.max(np.abs(vocals)) or 1.0) * 0.9
+    if hard:
+        vocals = _reverb(vocals)
 
     out_base.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out_base.with_suffix(".vocals.wav")), vocals, SR)
 
-    bed = _music_bed(len(vocals))
-    mix = vocals * 0.85 + bed * 0.45
+    bed = _music_bed(len(vocals), rich=hard)
+    bed_gain = 0.7 if hard else 0.45
+    mix = vocals * 0.85 + bed * bed_gain
     mix = mix / (np.max(np.abs(mix)) or 1.0) * 0.95
     sf.write(str(out_base.with_suffix(".mix.wav")), mix, SR)
 
@@ -181,8 +225,13 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True, help="Output basename (no extension)")
     ap.add_argument("--voice", default="en-us+f3", help="espeak-ng voice")
     ap.add_argument("--wpm", type=int, default=150, help="espeak-ng words-per-minute")
+    ap.add_argument(
+        "--hard",
+        action="store_true",
+        help="Realistic mode: reverb on vocals + a louder, richer backing mix",
+    )
     args = ap.parse_args()
-    build(args.lyrics, args.out, args.voice, args.wpm)
+    build(args.lyrics, args.out, args.voice, args.wpm, hard=args.hard)
     return 0
 
 

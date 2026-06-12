@@ -20,11 +20,12 @@ from .align import FILL_RATIO, INTER_WORD_GAP_SEC, MIN_WORD_SEC, enforce_word_ga
 # MMS_FA frame stride is 20 ms; sub-frame rounding lives well under perception.
 _DEFAULT_BUNDLE = "MMS_FA"
 
-# CTC models emit a token a frame or two after the true acoustic onset. We snap each
-# word start back to the vocal-energy onset, bounded so we never cross into the prior
-# word, then apply a tiny lead so highlights land on the beat rather than just behind it.
+# CTC token starts sit a little off the true acoustic onset (usually late, sometimes
+# early when a window has trailing sustain). We snap each word start to the nearest
+# vocal-energy onset in a bounded window around the forced start, so highlights fire
+# exactly when the syllable is sung. A tiny lead keeps them from trailing the voice.
 ONSET_BACK_SEC = 0.40
-ONSET_FWD_SEC = 0.05
+ONSET_FWD_SEC = 0.28
 ONSET_RISE_RATIO = 0.22
 ONSET_LEAD_SEC = 0.02
 
@@ -158,37 +159,49 @@ def _interpolate_missing(aligned: list[dict]) -> None:
 
 
 def _snap_onsets(schedule: list[dict], vocals_path: Path, *, lead: float = ONSET_LEAD_SEC) -> None:
-    """Snap each word start to the local vocal-energy onset, bounded by neighbors.
+    """Snap each word start to the nearest vocal-energy onset, bounded by neighbors.
 
-    The search reaches back toward (but never past) the previous word so single-letter
-    tokens like "I" that CTC places late are pulled onto the real onset, while words in
-    legato passages can't grab a distant earlier rise.
+    Bidirectional: a word the CTC placed *late* (e.g. single-letter "I") is pulled
+    earlier, and a word placed *early* (window with trailing sustain) is pushed onto the
+    real onset. The search is bounded by the previous and next word so it can't grab a
+    neighbor's onset, and it picks the energy rise closest to the forced start.
     """
     from .word_refine import VocalEnvelope
 
     env = VocalEnvelope.from_wav(vocals_path)
+    orig_starts = [float(e["start"]) for e in schedule]
     prev_end = 0.0
-    for entry in schedule:
+    for i, entry in enumerate(schedule):
         start = float(entry["start"])
         end = float(entry["end"])
         floor = prev_end + INTER_WORD_GAP_SEC
+        next_start = orig_starts[i + 1] if i + 1 < len(schedule) else env.times[-1]
         lo = max(floor, start - ONSET_BACK_SEC)
-        hi = start + ONSET_FWD_SEC
-        i_lo = env.idx_at(lo)
-        i_hi = env.idx_at(hi)
+        hi = min(next_start - INTER_WORD_GAP_SEC, start + ONSET_FWD_SEC)
         onset = start
-        if i_hi > i_lo:
+        if hi > lo:
+            i_lo = env.idx_at(lo)
+            i_hi = env.idx_at(hi)
             window = env.values[i_lo : i_hi + 1]
             peak = max(window) if window else 0.0
             if peak > 0:
                 threshold = peak * ONSET_RISE_RATIO
-                # Walk backward from the forced start to the most recent below->above
-                # crossing: the word's own onset, not an earlier blip in the gap.
-                for k in range(i_hi, i_lo, -1):
-                    if env.values[k] >= threshold and env.values[k - 1] < threshold:
+                cur = min(max(env.idx_at(start), i_lo), i_hi)
+                if env.values[cur] >= threshold:
+                    # Inside voiced energy: walk back to where this region began.
+                    k = cur
+                    while k > i_lo and env.values[k - 1] >= threshold:
+                        k -= 1
+                    if k > i_lo and env.values[k - 1] < threshold:
                         onset = env.times[k]
-                        break
-        new_start = min(max(onset + lead, floor), start + ONSET_FWD_SEC)
+                else:
+                    # Landed in a gap: snap forward to the next onset (the word's attack).
+                    k = cur
+                    while k < i_hi and env.values[k] < threshold:
+                        k += 1
+                    if env.values[k] >= threshold:
+                        onset = env.times[k]
+        new_start = min(max(onset + lead, floor), max(floor, hi))
         new_end = max(new_start + MIN_WORD_SEC, end)
         entry["start"] = round(new_start, 3)
         entry["end"] = round(new_end, 3)

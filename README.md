@@ -107,10 +107,13 @@ python tools/eval_alignment.py tools/fixtures/yebba.analysis/word_schedule.json 
        tools/fixtures/yebba.ground_truth.json
 ```
 
-On this fixture (375 words), forced alignment reaches ~16 ms median onset error with a
-near-zero bias (97% of words within 80 ms) — well under the ~80–100 ms perceptual
-threshold, so highlights are neither delayed nor ahead. On real recordings (e.g. the
-included `Yebba - Far Away.mp3`) use the default `--anchor whisper`; verify visually with
+On this fixture (375 words) forced alignment reaches **~17 ms median** onset error
+(>90% of words within 80 ms). Add `--hard` to `make_ground_truth.py` for a realistic
+stress test (reverb on the vocals + a louder, denser backing mix that bleeds through
+Demucs); it still holds **~19 ms median, 87% within 80 ms, 97% within 150 ms** — well
+under the ~80–100 ms perceptual threshold, so highlights are neither delayed nor ahead.
+On real recordings (e.g. the included `Yebba - Far Away.mp3`) use the default
+`--anchor whisper`; verify visually with
 `tools/plot_alignment.py "Yebba - Far Away.analysis/stems/vocals.wav" \
 "Yebba - Far Away.analysis/word_schedule.json" --start 0 --end 22 --out check.png`.
 
