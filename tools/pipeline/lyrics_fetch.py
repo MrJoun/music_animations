@@ -30,6 +30,23 @@ class LyricsResult:
     synced: bool
 
 
+# YouTube/upload title noise to strip before a lyrics lookup.
+_NOISE = re.compile(
+    r"[\(\[]\s*[^\)\]]*\b("
+    r"official|lyric[s]?|audio|video|visuali[sz]er|music\s*video|mv|hd|hq|4k|8k|"
+    r"explicit|clean|remaster(?:ed)?|live|performance|version|edit|color\s*coded"
+    r")\b[^\)\]]*[\)\]]",
+    re.IGNORECASE,
+)
+
+
+def _clean_title(title: str) -> str:
+    cleaned = _NOISE.sub("", title)
+    cleaned = re.sub(r"\b(official|lyric[s]?\s*video|audio|visuali[sz]er)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*[-–—|]\s*$", "", cleaned)  # trailing separators
+    return re.sub(r"\s{2,}", " ", cleaned).strip(" -–—|") or title.strip()
+
+
 def parse_filename(name: str) -> TrackMeta:
     base = re.sub(r"\.[^.]+$", "", name).strip()
     artist = ""
@@ -46,7 +63,7 @@ def parse_filename(name: str) -> TrackMeta:
             title = match.group(2).strip().replace("_", " ")
             break
 
-    return TrackMeta(artist=artist, title=title.replace("_", " ").strip())
+    return TrackMeta(artist=artist, title=_clean_title(title.replace("_", " ").strip()))
 
 
 def read_id3_meta(audio_path: Path) -> TrackMeta | None:

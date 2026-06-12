@@ -13,7 +13,7 @@ class LyricsManager {
     this._onsetMapped = false;
     this._exactWordTiming = false;
     this._trackCacheKey = "";
-    this._displayLeadSec = LyricsAligner.DISPLAY_LEAD_SEC;
+    this._displayLeadSec = 0;
     this._lagShiftSec = 0;
     this._userSyncOffsetSec = 0;
     this._whisperAligned = false;
