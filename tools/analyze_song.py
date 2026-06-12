@@ -127,11 +127,21 @@ def _forced_schedule(
     from pipeline.forced_align import (
         asr_anchor_word_times,
         build_forced_schedule,
+        windows_from_line_times,
         windows_from_word_times,
     )
 
     line_windows = None
-    if anchor == "whisper":
+    used = "global"
+
+    # Prefer human LRC line timestamps when present (most accurate anchor).
+    if anchor in ("auto", "lrc"):
+        line_windows = windows_from_line_times(timed_lines, duration)
+        if line_windows is not None:
+            used = "lrc"
+
+    # Otherwise (or for plain lyrics in auto mode) anchor each line by whisper.
+    if line_windows is None and anchor in ("auto", "whisper"):
         asr = _asr_words(
             out_dir, stem_paths, envelopes, model_size=model_size, device=device, force=force
         )
@@ -142,10 +152,11 @@ def _forced_schedule(
                 flat_tokens.append(tok)
                 owner.append((li, wi))
         word_times = asr_anchor_word_times(flat_tokens, asr, duration)
-        line_windows = windows_from_word_times(
-            word_times, owner, len(timed_lines), duration
-        )
+        line_windows = windows_from_word_times(word_times, owner, len(timed_lines), duration)
+        if line_windows is not None:
+            used = "whisper"
 
+    print(f"  anchor: {used}")
     return build_forced_schedule(
         timed_lines,
         stem_paths["vocals"],
@@ -186,7 +197,7 @@ def _build_background_cmd(args: argparse.Namespace, audio_path: Path) -> list[st
         cmd += ["--device", args.device]
     if args.align != "forced":
         cmd += ["--align", args.align]
-    if args.anchor != "whisper":
+    if args.anchor != "auto":
         cmd += ["--anchor", args.anchor]
     if args.lyric_lead != 0.02:
         cmd += ["--lyric-lead", str(args.lyric_lead)]
@@ -218,10 +229,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--anchor",
-        default="whisper",
-        choices=["whisper", "none"],
-        help="Forced-align anchoring: 'whisper' windows each line by ASR (robust on long "
-        "songs, default); 'none' runs one global pass (best for short clips).",
+        default="auto",
+        choices=["auto", "lrc", "whisper", "none"],
+        help="Forced-align anchoring: 'auto' (default) uses human LRC line times when the "
+        "lyrics are synced, else whisper; 'lrc' forces LRC times; 'whisper' windows each "
+        "line by ASR; 'none' runs one global pass (best for short clips).",
     )
     parser.add_argument("--force", action="store_true", help="Re-run even if manifest exists")
     parser.add_argument(

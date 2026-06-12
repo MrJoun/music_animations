@@ -253,6 +253,45 @@ def asr_anchor_word_times(
     return out
 
 
+def windows_from_line_times(
+    timed_lines: list[dict],
+    duration: float,
+    *,
+    pad_before: float = 0.8,
+    pad_after: float = 0.5,
+) -> list[tuple[float, float]] | None:
+    """Per-line windows from human LRC line timestamps (the most accurate anchor).
+
+    Returns ``None`` if the lyrics aren't synced (no usable line times), so the caller
+    can fall back to whisper anchoring.
+    """
+    times = [float(l.get("time") or 0.0) for l in timed_lines]
+    synced = [i for i, l in enumerate(timed_lines) if (l.get("time") or 0) > 0 and not l.get("hintEstimated")]
+    if len(synced) < max(2, len(timed_lines) // 2):
+        return None
+
+    # Fill any non-synced lines by interpolating between known neighbors.
+    for i in range(len(times)):
+        if i not in synced:
+            prev = max((j for j in synced if j < i), default=None)
+            nxt = min((j for j in synced if j > i), default=None)
+            if prev is not None and nxt is not None:
+                times[i] = times[prev] + (times[nxt] - times[prev]) * (i - prev) / (nxt - prev)
+            elif prev is not None:
+                times[i] = times[prev]
+            elif nxt is not None:
+                times[i] = max(0.0, times[nxt] - 1.0)
+
+    windows: list[tuple[float, float]] = []
+    for i in range(len(times)):
+        t0 = times[i]
+        t1 = times[i + 1] if i + 1 < len(times) else duration
+        lo = max(0.0, t0 - pad_before)
+        hi = min(duration, max(t1, t0 + 0.5) + pad_after)
+        windows.append((lo, hi))
+    return windows
+
+
 def windows_from_word_times(
     word_times: list[float],
     owner: list[tuple[int, int]],

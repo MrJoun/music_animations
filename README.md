@@ -83,12 +83,18 @@ python analyze_song.py "../Artist - Title.mp3" --lyrics "../lyrics.txt" --align 
 # nudge all forced onsets a touch earlier/later (seconds): --lyric-lead 0.0
 ```
 
-**Anchoring (`--anchor`, default `whisper`).** A single global forced-alignment pass
-drifts on long, melismatic songs with repeated choruses. By default the forced path first
-runs faster-whisper, does a global monotonic word match (repeat-safe), and **forced-aligns
-each lyric line within its own short audio window** — the same idea as WhisperX. Use
-`--anchor none` for one global pass (best for short, clean clips like the validation
-fixture below).
+**Anchoring (`--anchor`, default `auto`).** A single global forced-alignment pass drifts
+on long songs (repeated choruses, fast rap, fades). Each lyric line is instead aligned
+within its own short audio window. The window comes from:
+- `auto` (default): **human LRC line timestamps** when the lyrics are synced (`.lrc` or
+  LRCLIB) — the most accurate anchor — otherwise whisper.
+- `lrc`: force LRC line times.
+- `whisper`: faster-whisper + a global monotonic, repeat-safe word match (for plain lyrics).
+- `none`: one global pass (best for short, clean clips like the validation fixture).
+
+Words are then refined onto the actual vocal-energy onsets inside each window, so line
+*and* word timing track the singer. `tools/eval_lrc_lines.py` reports real-audio
+line-onset error against the human LRC timestamps.
 
 Forced alignment writes the same `word_schedule.json` shape the browser already renders, so no UI change is needed. The chosen method is recorded in `manifest.json` under `lyrics.alignMethod`.
 
