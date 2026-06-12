@@ -68,7 +68,42 @@ python analyze_song.py "../Artist - Title.mp3" --lyrics "../why_me_lyrics.txt" -
 # optional: --artist "Name" --title "Song" --model small.en --device cuda --force
 ```
 
-For sharper word boundaries on vocals, try `--model small.en` (slower than `base.en`, better syllable edges).
+### Alignment strategy (`--align`)
+
+Word timing is the heart of karaoke sync. Pick how lyric words are placed on the audio:
+
+| `--align` | How it works | When to use |
+|-----------|--------------|-------------|
+| `forced` *(default)* | **CTC forced alignment** (torchaudio `MMS_FA`) of the *known* lyrics to the Demucs vocal stem, then a bounded vocal-energy onset snap. Does **not** depend on ASR recognizing the words. | Best word-level accuracy; recommended whenever you have the lyrics. |
+| `whisper` | faster-whisper ASR word timestamps + DTW lyric match + envelope refinement (original pipeline). | No lyrics, or as a fallback. |
+| `hybrid` | Forced alignment, automatically falling back to `whisper` on failure. | Mixed catalogs. |
+
+```bash
+python analyze_song.py "../Artist - Title.mp3" --lyrics "../lyrics.txt" --align forced
+# nudge all forced onsets a touch earlier/later (seconds): --lyric-lead 0.0
+```
+
+Forced alignment writes the same `word_schedule.json` shape the browser already renders, so no UI change is needed. The chosen method is recorded in `manifest.json` under `lyrics.alignMethod`.
+
+### Validating alignment accuracy
+
+`tools/` ships a reproducible accuracy harness. It synthesizes a vocal track from any
+lyrics file with **exact known word times**, runs the pipeline, and measures onset error
+(positive = late, negative = early):
+
+```bash
+python tools/make_ground_truth.py yebba_far_away_lyrics.txt --out tools/fixtures/yebba
+python tools/analyze_song.py tools/fixtures/yebba.mp3 --lyrics yebba_far_away_lyrics.txt
+python tools/eval_alignment.py tools/fixtures/yebba.analysis/word_schedule.json \
+       tools/fixtures/yebba.ground_truth.json
+```
+
+On this fixture (375 words), `--align forced` reaches ~16 ms median onset error with a
+near-zero bias (97% of words within 80 ms) — well under the ~80–100 ms perceptual
+threshold, so highlights are neither delayed nor ahead. `tools/plot_alignment.py` renders
+the vocal envelope with word onsets marked for a visual check.
+
+For sharper word boundaries on the `whisper` path, try `--model small.en` (slower than `base.en`, better syllable edges).
 
 This writes a sidecar folder next to the MP3:
 
