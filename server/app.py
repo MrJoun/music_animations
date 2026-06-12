@@ -8,11 +8,13 @@ live progress, and serves the resulting pack + audio + the static frontend.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import traceback
+import urllib.parse
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -66,20 +68,21 @@ AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac"}
 
 def _download_url(url: str, dest_dir: Path, job_id: str) -> Path:
     _set(job_id, step="download", progress=0.02, message="Downloading audio…")
-    out_tmpl = str(dest_dir / "audio.%(ext)s")
+    # Name by the track title so lyric lookup (Artist - Title) works.
+    out_tmpl = str(dest_dir / "%(title)s.%(ext)s")
     cmd = [
         sys.executable, "-m", "yt_dlp", "--no-playlist", "-x",
         "--audio-format", "mp3", "--audio-quality", "0",
         "-o", out_tmpl, url,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
-    mp3 = dest_dir / "audio.mp3"
-    if mp3.exists():
-        return mp3
-    # Some extractors keep the original container; pick whatever audio landed.
-    for f in dest_dir.iterdir():
-        if f.suffix.lower() in AUDIO_EXTS:
-            return f
+    audio = sorted(
+        (f for f in dest_dir.iterdir() if f.suffix.lower() in AUDIO_EXTS),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+    if audio:
+        return audio[0]
     raise RuntimeError(
         "Download failed. " + (proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "")
     )
@@ -104,10 +107,11 @@ def _run_job(job_id: str, source: dict) -> None:
         manifest = run_pipeline(
             audio_path, out_dir=job_dir / "analysis", tagger=_tagger, progress=progress,
         )
+        audio_rel = urllib.parse.quote(audio_path.name)
         _set(
             job_id, status="done", progress=1.0, step="done", message="Ready",
             title=title,
-            audioUrl=f"/data/{job_id}/{audio_path.name}",
+            audioUrl=f"/data/{job_id}/{audio_rel}",
             manifestUrl=f"/data/{job_id}/analysis/manifest.json",
             baseUrl=f"/data/{job_id}/analysis/",
             animation=manifest.get("animation"),
@@ -129,7 +133,9 @@ async def analyze(file: UploadFile | None = File(default=None), url: str | None 
         ext = Path(file.filename).suffix.lower() or ".mp3"
         if ext not in AUDIO_EXTS:
             raise HTTPException(400, f"Unsupported audio type: {ext}")
-        safe = f"audio{ext}"
+        # Keep the original "Artist - Title" name (sanitized) so lyric lookup works.
+        stem = re.sub(r"[/\\:*?\"<>|]+", "_", Path(file.filename).stem).strip() or "audio"
+        safe = f"{stem}{ext}"
         with (job_dir / safe).open("wb") as out:
             shutil.copyfileobj(file.file, out)
         source = {"kind": "file", "filename": safe}

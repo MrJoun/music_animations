@@ -93,6 +93,14 @@ def merge_meta(
 ) -> TrackMeta:
     from_name = parse_filename(audio_path.name)
     id3 = read_id3_meta(audio_path)
+    # A structured "Artist - Title" filename is an intentional, reliable signal and is
+    # preferred over ID3 tags, which are frequently wrong/junk on downloaded rips.
+    if from_name.artist:
+        return TrackMeta(
+            artist=artist or from_name.artist,
+            title=title or from_name.title,
+            album=(id3.album if id3 else "") or from_name.album,
+        )
     return TrackMeta(
         artist=artist or (id3.artist if id3 else "") or from_name.artist or "Unknown Artist",
         title=title or (id3.title if id3 else "") or from_name.title or audio_path.stem,
