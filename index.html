@@ -3,34 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reel Studio — Music Visuals</title>
-  <link rel="stylesheet" href="css/style.css">
+  <title>Reel Studio — Beat-Reactive Music Visuals</title>
+  <link rel="stylesheet" href="css/app.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
 </head>
 <body>
-  <div id="app">
+  <!-- Ingest screen -->
+  <section id="ingest">
+    <div class="ingest-card">
+      <h1>Reel Studio</h1>
+      <p class="tagline">Drop a song or paste a link — we extract stems, read the genre, mood,
+        energy &amp; key, align the lyrics, and auto-direct a visual made for that track.</p>
+
+      <div id="ingest-inputs">
+        <div id="drop-zone" class="drop-zone">
+          <input type="file" id="file-input" accept="audio/*" hidden>
+          <div class="drop-icon">♪</div>
+          <span id="drop-label">Drop an audio file or click to browse</span>
+        </div>
+
+        <div class="or"><span>or</span></div>
+
+        <input type="text" id="url-input" class="url-input"
+               placeholder="Paste a YouTube / SoundCloud / direct audio URL">
+
+        <button id="analyze-btn" class="btn btn-primary btn-block">Analyze &amp; Visualize</button>
+      </div>
+
+      <div id="job-progress" class="job-progress hidden">
+        <div class="job-bar-track"><div id="job-bar" class="job-bar"></div></div>
+        <p id="job-msg" class="job-msg"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Visualizer stage -->
+  <div id="stage" class="hidden">
     <main id="preview">
       <div id="canvas-container"></div>
+      <div id="now-playing">
+        <div id="np-title" class="np-title"></div>
+        <div id="np-chips" class="np-chips"></div>
+        <div id="np-prompt" class="np-prompt"></div>
+        <div id="np-tags" class="np-tags"></div>
+      </div>
+      <button id="new-song-btn" class="btn btn-ghost">＋ New song</button>
       <div id="preview-badge">1080 × 1920 · MP4 · Beat-reactive</div>
     </main>
 
     <aside id="sidebar">
-      <header class="sidebar-header">
-        <h1>Reel Studio</h1>
-        <p class="subtitle">Song-aware scenes · lyrics & mood</p>
-        <p class="field-hint"><a href="timing-lab.html">Open Timing Lab</a> — word sync only, no visuals</p>
-      </header>
-
       <section class="panel">
-        <h2>Track</h2>
-        <label for="audio-input" class="btn btn-primary btn-block">Choose Song</label>
-        <input type="file" id="audio-input" accept="audio/*" hidden>
-        <p id="track-name" class="track-name">No track loaded</p>
-        <div id="analysis-panel" class="analysis-panel hidden">
-          <div class="analysis-bar-track"><div id="analysis-bar" class="analysis-bar-fill"></div></div>
-          <p id="analysis-text" class="analysis-text">Analyzing song…</p>
-          <p id="analysis-detail" class="analysis-detail"></p>
-        </div>
+        <h2>Transport</h2>
         <div class="transport">
           <button id="play-btn" class="btn" disabled>Play</button>
           <span id="time-current">0:00</span>
@@ -40,46 +63,17 @@
       </section>
 
       <section class="panel">
-        <h2>Lyrics</h2>
-        <label class="checkbox-row">
-          <input type="checkbox" id="auto-lyrics-toggle" checked>
-          Auto-sync lyrics (MP3 tags + LRCLIB)
-        </label>
-        <button type="button" id="lyrics-refetch-btn" class="btn btn-block" disabled>Search synced lyrics again</button>
-        <label for="lyrics-input" class="btn btn-block">Or load lyrics (.txt / .lrc)</label>
-        <input type="file" id="lyrics-input" accept=".txt,.lrc,text/plain" hidden>
-        <p id="lyrics-name" class="track-name">Loads when you choose a song — lyrics cache on repeat loads</p>
-        <input type="text" id="custom-text" class="text-input" placeholder="FALLBACK WORDS" maxlength="80">
-        <label class="checkbox-row">
-          <input type="checkbox" id="whisper-sync-toggle" checked>
-          Whisper word sync (cached after first run)
-        </label>
-        <button type="button" id="whisper-retranscribe-btn" class="btn btn-block" disabled>Re-transcribe with Whisper</button>
-        <p class="field-hint">Re-transcribe uses browser Whisper only — skipped when a local <code>.analysis</code> pack is loaded.</p>
-        <button type="button" id="clear-cache-btn" class="btn btn-block">Clear all lyrics cache</button>
-        <label class="checkbox-row">
-          <input type="checkbox" id="lyrics-fullscreen-toggle" checked>
-          Full-screen lyric mode (karaoke)
-        </label>
-        <label for="lyrics-sync-slider">Lyric timing <span id="lyrics-sync-val">+0.00s</span></label>
-        <input type="range" id="lyrics-sync-slider" min="-150" max="50" value="0" step="1" disabled>
-        <p class="field-hint">Local <code>.analysis</code> packs use faster-whisper on Demucs vocals. Otherwise browser Whisper on the full mix. Slide left if lyrics run early.</p>
-      </section>
-
-      <section class="panel">
         <h2>Visual</h2>
         <div id="preset-grid" class="preset-grid">
           <button type="button" class="preset-card featured active" data-preset="director">Director</button>
           <button type="button" class="preset-card" data-preset="storm">Object Storm</button>
-          <button type="button" class="preset-card" data-preset="generative">Generative AI</button>
-          <button type="button" class="preset-card" data-preset="typography">Typography</button>
-          <button type="button" class="preset-card" data-preset="face">Face</button>
-          <button type="button" class="preset-card" data-preset="objects3d">3D Objects</button>
-          <button type="button" class="preset-card" data-preset="fireworks">Fireworks</button>
-          <button type="button" class="preset-card" data-preset="tunnel">Tunnel</button>
-          <button type="button" class="preset-card" data-preset="galaxy">Galaxy</button>
-          <button type="button" class="preset-card" data-preset="kaleidoscope">Kaleidoscope</button>
+          <button type="button" class="preset-card" data-preset="generative">Generative</button>
           <button type="button" class="preset-card" data-preset="aurora">Aurora</button>
+          <button type="button" class="preset-card" data-preset="typography">Typography</button>
+          <button type="button" class="preset-card" data-preset="galaxy">Galaxy</button>
+          <button type="button" class="preset-card" data-preset="tunnel">Tunnel</button>
+          <button type="button" class="preset-card" data-preset="kaleidoscope">Kaleidoscope</button>
+          <button type="button" class="preset-card" data-preset="fireworks">Fireworks</button>
         </div>
         <label for="theme-select">Color theme</label>
         <select id="theme-select">
@@ -92,19 +86,17 @@
         </select>
         <label for="intensity-slider">Visual intensity <span id="intensity-val">50%</span></label>
         <input type="range" id="intensity-slider" min="0" max="100" value="50" step="5">
-        <p class="field-hint">Auto-set from song analysis. Lower for chill/R&B, raise for dubstep/EDM.</p>
-        <label class="checkbox-row">
-          <input type="checkbox" id="camera-toggle" checked>
-          Cinematic camera motion
-        </label>
-        <label class="checkbox-row">
-          <input type="checkbox" id="sparks-toggle">
-          Subtle spark accents
-        </label>
-        <label class="checkbox-row">
-          <input type="checkbox" id="stem-fx-toggle" checked>
-          Stem-reactive FX (per scene)
-        </label>
+        <label class="checkbox-row"><input type="checkbox" id="camera-toggle" checked> Cinematic camera</label>
+        <label class="checkbox-row"><input type="checkbox" id="sparks-toggle"> Spark accents</label>
+        <label class="checkbox-row"><input type="checkbox" id="stem-fx-toggle" checked> Stem-reactive FX</label>
+        <input type="text" id="custom-text" class="text-input" placeholder="FALLBACK WORDS" maxlength="80">
+      </section>
+
+      <section class="panel">
+        <h2>Lyrics sync</h2>
+        <label for="lyrics-sync-slider">Timing <span id="lyrics-sync-val">+0.00s</span></label>
+        <input type="range" id="lyrics-sync-slider" min="-150" max="50" value="0" step="1" disabled>
+        <p class="field-hint">Forced-aligned to the vocal stem. Nudge if your speakers add latency.</p>
       </section>
 
       <section class="panel export-panel" id="export-panel">
@@ -113,13 +105,12 @@
           <label>Fade in <input type="range" id="fade-in" min="0" max="4" step="0.5" value="2"> <span id="fade-in-val">2s</span></label>
           <label>Fade out <input type="range" id="fade-out" min="0" max="4" step="0.5" value="2"> <span id="fade-out-val">2s</span></label>
         </div>
-        <button id="export-btn" class="btn btn-export btn-block" disabled>Export MP4 for Instagram</button>
+        <button id="export-btn" class="btn btn-export btn-block" disabled>Export MP4</button>
         <div id="export-meta">
           <span class="rec-dot hidden" id="rec-dot"></span>
           <span id="export-timer"></span>
-          <span id="export-status">Instagram needs MP4 — not WebM</span>
+          <span id="export-status">MP4 for Instagram — fades apply to audio + video</span>
         </div>
-        <p class="hint">Fade applies to audio + video on export. Scene cuts speed up when the song gets energetic.</p>
       </section>
     </aside>
   </div>
@@ -129,21 +120,13 @@
   <script src="js/audio.js"></script>
   <script src="js/song-blueprint.js"></script>
   <script src="js/analysis-pack.js"></script>
-  <script src="js/song-analyzer.js"></script>
   <script src="js/stem-analyzer.js"></script>
+  <script src="js/song-analyzer.js"></script>
   <script src="js/stem-fx.js"></script>
   <script src="js/energy-analyzer.js"></script>
-  <script src="js/lyrics-cache.js"></script>
-  <script src="js/lyrics-timing.js"></script>
-  <script src="js/lyrics-aligner.js"></script>
-  <script src="js/lyrics-onset-map.js"></script>
+  <script src="js/karaoke-clock.js"></script>
   <script src="js/lyrics-renderer.js"></script>
   <script src="js/lyrics.js"></script>
-  <script src="js/id3-lyrics.js"></script>
-  <script src="js/lyrics-fetcher.js"></script>
-  <script src="js/whisper-aligner.js"></script>
-  <script src="js/whisper-cache.js"></script>
-  <script src="js/app-cache.js"></script>
   <script src="js/fade-controller.js"></script>
   <script src="js/presets/bars.js"></script>
   <script src="js/presets/particles.js"></script>
@@ -162,14 +145,6 @@
   <script src="js/scene-revival.js"></script>
   <script src="js/scene-director.js"></script>
   <script src="js/export.js"></script>
-  <script src="js/main.js"></script>
-  <script>
-    document.getElementById("fade-in").addEventListener("input", (e) => {
-      document.getElementById("fade-in-val").textContent = e.target.value + "s";
-    });
-    document.getElementById("fade-out").addEventListener("input", (e) => {
-      document.getElementById("fade-out-val").textContent = e.target.value + "s";
-    });
-  </script>
+  <script src="js/app.js"></script>
 </body>
 </html>

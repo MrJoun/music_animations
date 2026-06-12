@@ -127,15 +127,9 @@ const LyricsRenderer = {
         const nextEntry = schedule[globalIdx + 1];
 
         const state = entry
-          ? entry.whisper
-            ? WhisperAligner.wordState(entry, currentTime, nextEntry)
-            : LyricsOnsetMapper.wordState(entry, currentTime, nextEntry)
+          ? KaraokeClock.wordState(entry, currentTime, nextEntry)
           : "future";
-        const progress = entry
-          ? entry.whisper
-            ? WhisperAligner.wordProgress(entry, currentTime)
-            : LyricsOnsetMapper.wordProgress(entry, currentTime, liveVocalCtx)
-          : 0;
+        const progress = entry ? KaraokeClock.wordProgress(entry, currentTime) : 0;
 
         this._drawKaraokeWord(
           p,

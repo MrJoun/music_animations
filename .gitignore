@@ -1,5 +1,6 @@
 # Python
 tools/.venv/
+tools/fixtures/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -28,3 +29,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Backend job data (per-song packs)
+data/

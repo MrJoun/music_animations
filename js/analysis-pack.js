@@ -44,6 +44,30 @@ const AnalysisPack = {
     }
   },
 
+  /** Load a pack directly from a backend manifest URL (absolute path under /data). */
+  async loadFromUrl(manifestUrl) {
+    try {
+      const manifestRes = await fetch(manifestUrl);
+      if (!manifestRes.ok) return null;
+      const manifest = await manifestRes.json();
+      if (manifest.version !== this.MANIFEST_VERSION) return null;
+      const baseUrl = this._baseUrl(manifestUrl);
+      const pack = { manifest, baseUrl };
+      const fetchJson = async (rel) => {
+        if (!rel) return null;
+        const res = await fetch(baseUrl + rel);
+        return res.ok ? res.json() : null;
+      };
+      pack.envelopes = await fetchJson(manifest.paths?.envelopes);
+      pack.wordSchedule = await fetchJson(manifest.paths?.word_schedule);
+      pack.lyricLines = await fetchJson(manifest.paths?.lyrics);
+      return pack;
+    } catch (err) {
+      console.warn("Pack load failed:", err);
+      return null;
+    }
+  },
+
   applyPack(pack, songAnalyzer) {
     if (!pack) return null;
     songAnalyzer.importAnalysisPack(pack);
