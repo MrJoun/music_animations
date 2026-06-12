@@ -1,0 +1,254 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #08080e;
+  color: #e8e8f0;
+  min-height: 100vh;
+}
+
+.timing-lab {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.lab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid #1c1c2a;
+  background: #101018;
+}
+
+.lab-header h1 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.lab-header a {
+  color: #8b87c7;
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.lab-header a:hover {
+  color: #a29bfe;
+}
+
+.lab-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid #1c1c2a;
+  background: #0c0c14;
+}
+
+.lab-controls label.btn {
+  cursor: pointer;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #2a2a3e;
+  background: #181824;
+  color: #e8e8f0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #222230;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
+#track-name {
+  font-size: 0.85rem;
+  color: #8a8aa0;
+  flex: 1;
+  min-width: 120px;
+}
+
+#status-msg {
+  width: 100%;
+  font-size: 0.8rem;
+  color: #c9a227;
+}
+
+#status-msg.ok {
+  color: #6bcb77;
+}
+
+#status-msg.muted {
+  color: #6a6a82;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.transport input[type="range"] {
+  flex: 1;
+  accent-color: #a29bfe;
+}
+
+.transport span {
+  font-size: 0.8rem;
+  color: #9a9ab0;
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+}
+
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.sync-row label {
+  font-size: 0.8rem;
+  color: #9a9ab0;
+  white-space: nowrap;
+}
+
+.sync-row input[type="range"] {
+  flex: 1;
+  accent-color: #fd79a8;
+}
+
+.karaoke-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px 48px;
+  text-align: center;
+}
+
+#karaoke-line {
+  max-width: 920px;
+  font-size: clamp(1.6rem, 5vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+#karaoke-line .word {
+  display: inline-block;
+  position: relative;
+  margin: 0 0.18em 0.08em 0;
+  white-space: nowrap;
+}
+
+#karaoke-line .word-base {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+#karaoke-line .word-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: #fff;
+  width: calc(var(--p, 0) * 100%);
+  transition: width 0.06s linear;
+  pointer-events: none;
+}
+
+#karaoke-line .word.linger .word-fill {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+#karaoke-line .word.past .word-fill {
+  color: rgba(235, 238, 245, 0.72);
+  width: 100%;
+}
+
+#karaoke-line .word.future .word-fill {
+  width: 0%;
+}
+
+#karaoke-line .word.active .word-fill {
+  color: #a29bfe;
+}
+
+#next-line {
+  margin-top: 28px;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.32);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  max-width: 720px;
+}
+
+#next-line:empty {
+  display: none;
+}
+
+.debug-toggle {
+  margin: 0 24px 12px;
+}
+
+.debug-panel {
+  margin: 0 24px 24px;
+  padding: 14px 16px;
+  background: #101018;
+  border: 1px solid #1c1c2a;
+  border-radius: 8px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: #b0b0c8;
+}
+
+.debug-panel.hidden {
+  display: none;
+}
+
+.debug-panel dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+}
+
+.debug-panel dt {
+  color: #6a6a82;
+}
+
+.debug-panel dd {
+  color: #d8d8ec;
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="file"] {
+  display: none;
+}
