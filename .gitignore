@@ -1,5 +1,6 @@
 # Python
 tools/.venv/
+tools/fixtures/
 __pycache__/
 *.py[cod]
 *.egg-info/
