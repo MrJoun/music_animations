@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 TIMESTAMP_PAD_SEC = 0.02
 MIN_WORD_SEC = 0.09
+INTER_WORD_GAP_SEC = 0.05
 FILL_RATIO = 0.94
 GAP = -3
 MIN_MATCH_SCORE = 1
@@ -272,16 +273,39 @@ def _line_window(
 
 
 def _spread_by_weight(count: int, weights: list[float], t0: float, t1: float) -> list[dict]:
+    if count <= 0:
+        return []
+    total_gap = INTER_WORD_GAP_SEC * max(0, count - 1)
+    usable = max(MIN_WORD_SEC * count, t1 - t0 - total_gap)
     total = sum(weights) or 1.0
-    span = max(MIN_WORD_SEC * count, t1 - t0)
     slots: list[dict] = []
     cum = 0.0
-    for weight in weights:
+    cursor = t0
+    for i, weight in enumerate(weights):
         a = cum / total
         cum += weight
         b = cum / total
-        slots.append({"start": t0 + a * span, "end": t0 + b * span})
+        seg_start = t0 + a * usable
+        seg_end = t0 + b * usable
+        dur = max(MIN_WORD_SEC, seg_end - seg_start)
+        slots.append({"start": round(cursor, 3), "end": round(cursor + dur, 3)})
+        cursor += dur + (INTER_WORD_GAP_SEC if i < count - 1 else 0)
     return slots
+
+
+def enforce_word_gaps(entries: list[dict]) -> None:
+    """Ensure consecutive words do not touch — leave inter-word silence slots."""
+    for i in range(len(entries)):
+        if i > 0:
+            min_start = float(entries[i - 1]["end"]) + INTER_WORD_GAP_SEC
+            if float(entries[i]["start"]) < min_start:
+                entries[i]["start"] = round(min_start, 3)
+        if float(entries[i]["end"]) <= float(entries[i]["start"]):
+            entries[i]["end"] = round(float(entries[i]["start"]) + MIN_WORD_SEC, 3)
+        if i + 1 < len(entries):
+            max_end = float(entries[i + 1]["start"]) - INTER_WORD_GAP_SEC
+            if float(entries[i]["end"]) > max_end:
+                entries[i]["end"] = round(max(float(entries[i]["start"]) + MIN_WORD_SEC, max_end), 3)
 
 
 def _interpolate_direct_times(
@@ -315,7 +339,7 @@ def _interpolate_direct_times(
 
     first = anchors[0]
     if first > 0:
-        t1 = times[first]["start"] - 0.03
+        t1 = times[first]["start"] - INTER_WORD_GAP_SEC
         t0 = max(floor_time, t1 - sum(weights[:first]) * 0.15)
         slots = _spread_by_weight(first, weights[:first], t0, t1)
         for i in range(first):
@@ -326,8 +350,8 @@ def _interpolate_direct_times(
         gap_count = i1 - i0 - 1
         if gap_count <= 0:
             continue
-        t0 = times[i0]["end"] + 0.015
-        t1 = times[i1]["start"] - 0.015
+        t0 = times[i0]["end"] + INTER_WORD_GAP_SEC
+        t1 = times[i1]["start"] - INTER_WORD_GAP_SEC
         gap_weights = weights[i0 + 1 : i1]
         if vocal_env is not None and t1 > t0 + MIN_WORD_SEC:
             from .word_refine import find_onset_peaks
@@ -340,7 +364,7 @@ def _interpolate_direct_times(
 
     last = anchors[-1]
     if last < n - 1:
-        t0 = times[last]["end"] + 0.02
+        t0 = times[last]["end"] + INTER_WORD_GAP_SEC
         tail = weights[last + 1 :]
         span = sum(tail) * 0.16
         slots = _spread_by_weight(n - last - 1, tail, t0, t0 + span)
@@ -406,12 +430,9 @@ def _build_line_schedule(
             }
         )
 
-    for i in range(1, len(words)):
-        if words[i]["start"] < words[i - 1]["start"] + 0.04:
-            words[i]["start"] = words[i - 1]["start"] + 0.04
-        if words[i]["end"] <= words[i]["start"] + MIN_WORD_SEC:
-            words[i]["end"] = words[i]["start"] + MIN_WORD_SEC
-        words[i]["fillEnd"] = words[i]["start"] + (words[i]["end"] - words[i]["start"]) * FILL_RATIO
+    enforce_word_gaps(words)
+    for word in words:
+        word["fillEnd"] = word["start"] + (word["end"] - word["start"]) * FILL_RATIO
 
     matched = [p for p in pairs if p["asr_idx"] >= 0]
     last_global = matched[-1]["asr_idx"] if matched else -1

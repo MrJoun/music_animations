@@ -81,7 +81,7 @@ Artist - Title.analysis/
   transcript.json     # raw Whisper words on vocal stem
 ```
 
-**Word timing:** after Whisper + lyric alignment, the pipeline refines each word using the **vocal stem RMS envelope** — extending ends to capture sung tails, tightening onsets, and placing repeated words (e.g. chorus *away*) on envelope peaks instead of even gaps. Sidecars include `"scheduleRefined": true` in `manifest.json`.
+**Word timing:** after Whisper + lyric alignment, the pipeline refines each word using the **vocal stem RMS envelope** — extending ends to capture sung tails, tightening onsets, and placing repeated words (e.g. chorus *away*) on envelope peaks instead of even gaps. Inter-word **silence gaps** (~50 ms) are preserved so karaoke highlight rests between words. Sidecars include `"scheduleRefined": true` in `manifest.json`. Re-run with `--force` to regenerate schedules after pipeline updates.
 
 **Caching:** if `manifest.json` already exists, the script skips work unless you pass `--force`.
 

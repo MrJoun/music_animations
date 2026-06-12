@@ -301,7 +301,7 @@ const TimingLab = {
 
     this.wordEls = tokens.map((word, wi) => {
       const span = document.createElement("span");
-      span.className = "word future";
+      span.className = "word pending";
       span.dataset.idx = String(wi);
 
       const base = document.createElement("span");
@@ -346,8 +346,8 @@ const TimingLab = {
 
     if (this.schedule.length) {
       globalWordIdx = KaraokeClock.findActiveWordIndex(this.schedule, syncTime);
-      activeWord = this.schedule[globalWordIdx] || null;
-      lineIndex = activeWord?.lineIndex ?? 0;
+      activeWord = globalWordIdx >= 0 ? this.schedule[globalWordIdx] : null;
+      lineIndex = KaraokeClock.findLineIndex(this.schedule, syncTime);
       lineIndex = Math.min(lineIndex, this.lines.length - 1);
     } else {
       lineIndex = 0;
@@ -359,16 +359,21 @@ const TimingLab = {
 
     if (this.schedule.length && this.wordEls.length) {
       const lineWords = this.byLine[lineIndex] || [];
+      const lineOffset = KaraokeClock.scheduleOffsetForLine(this.byLine, lineIndex);
+      const inGap = KaraokeClock.isInGap(this.schedule, syncTime);
+
       for (let wi = 0; wi < this.wordEls.length; wi++) {
         const entry = lineWords[wi];
         const { el, fill } = this.wordEls[wi];
         if (!entry) {
-          el.className = "word future";
+          el.className = "word pending";
           fill.style.setProperty("--p", "0");
           continue;
         }
 
-        const state = KaraokeClock.wordState(entry, syncTime);
+        const globalIdx = lineOffset + wi;
+        const nextEntry = this.schedule[globalIdx + 1] || null;
+        const state = KaraokeClock.wordState(entry, syncTime, nextEntry);
         const progress = KaraokeClock.wordProgress(entry, syncTime);
         el.className = `word ${state}`;
         fill.style.setProperty("--p", String(progress));
@@ -377,17 +382,20 @@ const TimingLab = {
       if (!activeWord && globalWordIdx >= 0) {
         activeWord = this.schedule[globalWordIdx];
       }
+
+      this.updateDebug(currentTime, syncTime, lineIndex, activeWord, inGap);
+      return;
     }
 
-    this.updateDebug(currentTime, syncTime, lineIndex, activeWord);
+    this.updateDebug(currentTime, syncTime, lineIndex, activeWord, false);
   },
 
-  updateDebug(currentTime, syncTime, lineIndex, activeWord) {
+  updateDebug(currentTime, syncTime, lineIndex, activeWord, inGap = false) {
     if (!this.debugVisible) return;
     this.els.dbgCurrent.textContent = currentTime.toFixed(3);
     this.els.dbgSync.textContent = syncTime.toFixed(3);
     this.els.dbgLine.textContent = lineIndex >= 0 ? String(lineIndex) : "—";
-    this.els.dbgWord.textContent = activeWord?.word ?? "—";
+    this.els.dbgWord.textContent = inGap ? "GAP" : activeWord?.word ?? "—";
     this.els.dbgStart.textContent =
       activeWord?.start != null ? activeWord.start.toFixed(3) : "—";
     this.els.dbgEnd.textContent =

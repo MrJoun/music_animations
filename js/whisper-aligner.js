@@ -5,7 +5,7 @@ const WhisperAligner = {
   SCHEDULE_VERSION: 9,
   TIMESTAMP_PAD_SEC: 0.08,
   MIN_WORD_SEC: 0.09,
-  LINGER_SEC: 0.28,
+  INTER_WORD_GAP_SEC: 0.05,
   FILL_RATIO: 0.94,
   MIN_MATCH_SCORE: 1,
 
@@ -246,20 +246,45 @@ const WhisperAligner = {
   },
 
   _spreadByWeight(count, weights, t0, t1) {
+    const gap = this.INTER_WORD_GAP_SEC;
+    const totalGap = gap * Math.max(0, count - 1);
+    const usable = Math.max(this.MIN_WORD_SEC * count, t1 - t0 - totalGap);
     const slots = [];
     const total = weights.reduce((a, b) => a + b, 0) || 1;
-    const span = Math.max(this.MIN_WORD_SEC * count, t1 - t0);
     let cum = 0;
+    let cursor = t0;
     for (let i = 0; i < count; i++) {
       const a = cum / total;
       cum += weights[i];
       const b = cum / total;
+      const segStart = t0 + a * usable;
+      const segEnd = t0 + b * usable;
+      const dur = Math.max(this.MIN_WORD_SEC, segEnd - segStart);
       slots.push({
-        start: t0 + a * span,
-        end: t0 + b * span,
+        start: cursor,
+        end: cursor + dur,
       });
+      cursor += dur + (i < count - 1 ? gap : 0);
     }
     return slots;
+  },
+
+  _enforceWordGaps(words) {
+    for (let i = 0; i < words.length; i++) {
+      if (i > 0) {
+        const minStart = words[i - 1].end + this.INTER_WORD_GAP_SEC;
+        if (words[i].start < minStart) words[i].start = minStart;
+      }
+      if (words[i].end <= words[i].start) {
+        words[i].end = words[i].start + this.MIN_WORD_SEC;
+      }
+      if (i + 1 < words.length) {
+        const maxEnd = words[i + 1].start - this.INTER_WORD_GAP_SEC;
+        if (words[i].end > maxEnd) {
+          words[i].end = Math.max(words[i].start + this.MIN_WORD_SEC, maxEnd);
+        }
+      }
+    }
   },
 
   _interpolateDirectTimes(tokens, pairs, asrPool, floorTime) {
@@ -305,8 +330,8 @@ const WhisperAligner = {
       const gapCount = i1 - i0 - 1;
       if (gapCount <= 0) continue;
 
-      const t0 = times[i0].end + 0.015;
-      const t1 = times[i1].start - 0.015;
+      const t0 = times[i0].end + this.INTER_WORD_GAP_SEC;
+      const t1 = times[i1].start - this.INTER_WORD_GAP_SEC;
       const gapWeights = weights.slice(i0 + 1, i1);
       const slots = this._spreadByWeight(gapCount, gapWeights, t0, Math.max(t0 + 0.08, t1));
       for (let k = 0; k < gapCount; k++) {
@@ -316,7 +341,7 @@ const WhisperAligner = {
 
     const last = anchors[anchors.length - 1];
     if (last < n - 1) {
-      const t0 = times[last].end + 0.02;
+      const t0 = times[last].end + this.INTER_WORD_GAP_SEC;
       const tail = weights.slice(last + 1);
       const span = tail.reduce((a, b) => a + b, 0) * 0.16;
       const slots = this._spreadByWeight(n - last - 1, tail, t0, t0 + span);
@@ -354,14 +379,9 @@ const WhisperAligner = {
       };
     });
 
-    for (let i = 1; i < words.length; i++) {
-      if (words[i].start < words[i - 1].start + 0.04) {
-        words[i].start = words[i - 1].start + 0.04;
-      }
-      if (words[i].end <= words[i].start + this.MIN_WORD_SEC) {
-        words[i].end = words[i].start + this.MIN_WORD_SEC;
-      }
-      words[i].fillEnd = words[i].start + (words[i].end - words[i].start) * this.FILL_RATIO;
+    this._enforceWordGaps(words);
+    for (const word of words) {
+      word.fillEnd = word.start + (word.end - word.start) * this.FILL_RATIO;
     }
 
     const lastAsrGlobal = pairs.filter((p) => p.asrIdx >= 0).pop();
@@ -479,12 +499,12 @@ const WhisperAligner = {
     return this._smoothstep((t - entry.start) / span);
   },
 
-  wordState(entry, t) {
-    if (!entry) return "future";
-    if (t < entry.start) return "future";
-    if (t >= entry.end + this.LINGER_SEC) return "past";
-    if (t >= entry.end) return "linger";
-    return "active";
+  wordState(entry, t, nextEntry = null) {
+    if (!entry) return "pending";
+    if (t < entry.start) return "pending";
+    if (t >= entry.start && t <= entry.end) return "active";
+    if (nextEntry && t > entry.end && t < nextEntry.start) return "gap";
+    return "done";
   },
 
   lineStartTime(schedule, lineIndex) {

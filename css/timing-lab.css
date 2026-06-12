@@ -184,21 +184,37 @@ body {
   pointer-events: none;
 }
 
+#karaoke-line .word.pending .word-fill {
+  width: 0%;
+}
+
+#karaoke-line .word.gap .word-fill {
+  color: rgba(235, 238, 245, 0.72);
+  width: 100%;
+}
+
+#karaoke-line .word.done .word-fill {
+  color: rgba(235, 238, 245, 0.72);
+  width: 100%;
+}
+
+#karaoke-line .word.active .word-fill {
+  color: #a29bfe;
+}
+
+/* Legacy aliases */
+#karaoke-line .word.future .word-fill {
+  width: 0%;
+}
+
 #karaoke-line .word.linger .word-fill {
   color: rgba(255, 255, 255, 0.95);
+  width: 100%;
 }
 
 #karaoke-line .word.past .word-fill {
   color: rgba(235, 238, 245, 0.72);
   width: 100%;
-}
-
-#karaoke-line .word.future .word-fill {
-  width: 0%;
-}
-
-#karaoke-line .word.active .word-fill {
-  color: #a29bfe;
 }
 
 #next-line {

@@ -8,11 +8,13 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from .align import FILL_RATIO, MIN_WORD_SEC
+from .align import FILL_RATIO, INTER_WORD_GAP_SEC, MIN_WORD_SEC
 
 MERGE_GAP_SEC = 0.02
+MIN_INTER_WORD_GAP_SEC = INTER_WORD_GAP_SEC
 TAIL_THRESHOLD_RATIO = 0.25
 ONSET_THRESHOLD_RATIO = 0.15
+SILENCE_RMS_RATIO = 0.14
 FINE_HOP_SEC = 0.01
 TAIL_HOLD_SAMPLES = 2
 MAX_TAIL_EXTEND_SEC = 0.42
@@ -115,9 +117,60 @@ class VocalEnvelope:
 def _even_slots(count: int, t0: float, t1: float) -> list[dict]:
     if count <= 0:
         return []
-    span = max(MIN_WORD_SEC * count, t1 - t0)
-    step = span / count
-    return [{"start": round(t0 + i * step, 3), "end": round(t0 + (i + 1) * step, 3)} for i in range(count)]
+    gap = MIN_INTER_WORD_GAP_SEC
+    total_gap = gap * max(0, count - 1)
+    usable = max(MIN_WORD_SEC * count, t1 - t0 - total_gap)
+    dur = usable / count
+    slots: list[dict] = []
+    cursor = t0
+    for _ in range(count):
+        slots.append({"start": round(cursor, 3), "end": round(cursor + dur, 3)})
+        cursor += dur + gap
+    return slots
+
+
+def _inter_word_silence(env: VocalEnvelope, end: float, next_start: float, peak: float) -> bool:
+    """True when RMS stays below threshold between word end and next word start."""
+    if next_start - end < MIN_INTER_WORD_GAP_SEC * 0.5:
+        return False
+    threshold = peak * SILENCE_RMS_RATIO
+    i0 = env.idx_at(end)
+    i1 = env.idx_at(max(end, next_start - MIN_INTER_WORD_GAP_SEC))
+    if i0 > i1:
+        return True
+    for idx in range(i0, i1 + 1):
+        if env.values[idx] >= threshold:
+            return False
+    return True
+
+
+def shrink_end_for_gap(
+    env: VocalEnvelope,
+    start: float,
+    end: float,
+    next_start: float,
+    *,
+    min_gap: float = MIN_INTER_WORD_GAP_SEC,
+) -> float:
+    """Trim word end at vocal decay and reserve silence before the next word."""
+    hard_limit = next_start - min_gap
+    end = min(end, hard_limit)
+    peak = env.peak_in_range(start, max(end, start + MIN_WORD_SEC))
+    if peak <= 0:
+        return round(max(start + MIN_WORD_SEC, end), 3)
+
+    if _inter_word_silence(env, end, next_start, peak):
+        threshold = peak * SILENCE_RMS_RATIO
+        idx_end = env.idx_at(end)
+        idx_start = env.idx_at(start)
+        last_voiced = start
+        for idx in range(idx_end, idx_start - 1, -1):
+            if env.values[idx] >= threshold:
+                last_voiced = env.times[idx]
+                break
+        end = min(end, last_voiced + FINE_HOP_SEC, hard_limit)
+
+    return round(max(start + MIN_WORD_SEC, end), 3)
 
 
 def _local_peaks(env: VocalEnvelope, t0: float, t1: float) -> list[tuple[float, float]]:
@@ -181,17 +234,24 @@ def find_onset_peaks(env: VocalEnvelope, t0: float, t1: float, count: int) -> li
     if not centers:
         return _even_slots(count, t0, t1)
 
-    max_dur = max(MIN_WORD_SEC * 1.2, (t1 - t0) / count * 1.35)
+    max_dur = max(MIN_WORD_SEC * 1.2, (t1 - t0 - MIN_INTER_WORD_GAP_SEC * max(0, count - 1)) / max(count, 1) * 1.35)
     boundaries = [t0] + centers + [t1]
     slots: list[dict] = []
     for i, center in enumerate(centers):
         seg_lo = boundaries[i]
         seg_hi = boundaries[i + 2] if i + 2 < len(boundaries) else t1
-        floor = seg_lo + MERGE_GAP_SEC if i == 0 else slots[-1]["end"] + MERGE_GAP_SEC
+        floor = seg_lo + MERGE_GAP_SEC if i == 0 else slots[-1]["end"] + MIN_INTER_WORD_GAP_SEC
         start = env.refine_start(max(seg_lo, center - 0.12), center + 0.04, floor_start=floor)
-        tail_limit = min(seg_hi - MERGE_GAP_SEC, start + max_dur, center + MAX_TAIL_EXTEND_SEC)
+        next_slot_start = boundaries[i + 1] if i + 1 < len(centers) else t1
+        tail_limit = min(
+            seg_hi - MIN_INTER_WORD_GAP_SEC,
+            next_slot_start - MIN_INTER_WORD_GAP_SEC,
+            start + max_dur,
+            center + MAX_TAIL_EXTEND_SEC,
+        )
         end = env.extend_end(start, max(center, start + MIN_WORD_SEC * 0.5), tail_limit)
-        end = min(end, start + max_dur, seg_hi - MERGE_GAP_SEC)
+        end = shrink_end_for_gap(env, start, end, min(tail_limit + MIN_INTER_WORD_GAP_SEC, next_slot_start))
+        end = min(end, start + max_dur, tail_limit)
         end = max(start + MIN_WORD_SEC, end)
         slots.append({"start": round(start, 3), "end": round(end, 3)})
 
@@ -216,12 +276,12 @@ def _apply_fill(entry: dict, fill_ratio: float = FILL_RATIO) -> None:
 
 def enforce_no_overlap(entries: list[dict]) -> None:
     for i in range(len(entries)):
-        if i > 0 and float(entries[i]["start"]) < float(entries[i - 1]["end"]) + MERGE_GAP_SEC:
-            entries[i]["start"] = round(float(entries[i - 1]["end"]) + MERGE_GAP_SEC, 3)
+        if i > 0 and float(entries[i]["start"]) < float(entries[i - 1]["end"]) + MIN_INTER_WORD_GAP_SEC:
+            entries[i]["start"] = round(float(entries[i - 1]["end"]) + MIN_INTER_WORD_GAP_SEC, 3)
         if float(entries[i]["end"]) <= float(entries[i]["start"]):
             entries[i]["end"] = round(float(entries[i]["start"]) + MIN_WORD_SEC, 3)
         if i + 1 < len(entries):
-            limit = float(entries[i + 1]["start"]) - MERGE_GAP_SEC
+            limit = float(entries[i + 1]["start"]) - MIN_INTER_WORD_GAP_SEC
             if float(entries[i]["end"]) > limit:
                 entries[i]["end"] = round(max(float(entries[i]["start"]) + MIN_WORD_SEC, limit), 3)
 
@@ -239,11 +299,12 @@ def refine_transcript_words(
     for i, w in enumerate(words):
         start = float(w["start"])
         end = float(w["end"])
-        floor = refined[-1]["end"] + MERGE_GAP_SEC if refined else 0.0
+        floor = refined[-1]["end"] + MIN_INTER_WORD_GAP_SEC if refined else 0.0
         next_start = float(words[i + 1]["start"]) if i + 1 < len(words) else env.times[-1]
-        limit = next_start - MERGE_GAP_SEC
+        limit = next_start - MIN_INTER_WORD_GAP_SEC
         start = env.refine_start(start, end, floor_start=floor)
         end = env.extend_end(start, max(end, start + MIN_WORD_SEC), limit)
+        end = shrink_end_for_gap(env, start, end, next_start)
         refined.append({"word": w["word"], "start": start, "end": end})
     return refined
 
@@ -265,12 +326,13 @@ def refine_word_schedule(
     for i, entry in enumerate(out):
         start = float(entry["start"])
         end = float(entry["end"])
-        floor = out[i - 1]["end"] + MERGE_GAP_SEC if i > 0 else 0.0
+        floor = out[i - 1]["end"] + MIN_INTER_WORD_GAP_SEC if i > 0 else 0.0
         next_start = float(out[i + 1]["start"]) if i + 1 < len(out) else env.times[-1]
-        limit = next_start - MERGE_GAP_SEC
+        limit = next_start - MIN_INTER_WORD_GAP_SEC
         if entry.get("matched"):
             start = env.refine_start(start, end, floor_start=floor)
         end = env.extend_end(start, max(end, start + MIN_WORD_SEC), limit)
+        end = shrink_end_for_gap(env, start, end, next_start)
         entry["start"] = start
         entry["end"] = end
 
@@ -294,10 +356,10 @@ def refine_word_schedule(
             continue
         if out[run_start - 1]["lineIndex"] != run_line:
             continue
-        prev_end = float(out[run_start - 1]["end"]) + MERGE_GAP_SEC
-        next_start = orig_starts[run_end] - MERGE_GAP_SEC if run_end < len(out) else env.times[-1]
+        prev_end = float(out[run_start - 1]["end"]) + MIN_INTER_WORD_GAP_SEC
+        next_start = orig_starts[run_end] - MIN_INTER_WORD_GAP_SEC if run_end < len(out) else env.times[-1]
         if run_end < len(out) and out[run_end]["lineIndex"] > run_line:
-            next_start = max(next_start, orig_starts[run_end] - MERGE_GAP_SEC)
+            next_start = max(next_start, orig_starts[run_end] - MIN_INTER_WORD_GAP_SEC)
         if next_start <= prev_end + MIN_WORD_SEC:
             continue
         slots = find_onset_peaks(env, prev_end, next_start, count)

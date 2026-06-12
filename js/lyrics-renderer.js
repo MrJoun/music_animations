@@ -47,23 +47,26 @@ const LyricsRenderer = {
 
     let fillAmt = 0;
     if (state === "active") fillAmt = progress;
-    else if (state === "linger" || state === "past") fillAmt = 1;
+    else if (state === "gap" || state === "done" || state === "linger" || state === "past")
+      fillAmt = 1;
 
     if (fillAmt <= 0.002) return;
 
     const bright =
-      state === "linger"
-        ? [255, 255, 255]
-        : state === "past"
+      state === "gap" || state === "done"
+        ? [235, 238, 245]
+        : state === "linger" || state === "past"
           ? [235, 238, 245]
           : [theme.accent[0], theme.accent[1], theme.accent[2]];
 
     const alpha =
-      state === "linger"
-        ? 255 * fade
-        : state === "past"
-          ? 175 * fade
-          : 255 * fade;
+      state === "gap" || state === "done"
+        ? 175 * fade
+        : state === "linger"
+          ? 255 * fade
+          : state === "past"
+            ? 175 * fade
+            : 255 * fade;
     const ctx = p.drawingContext;
 
     ctx.save();
@@ -125,7 +128,7 @@ const LyricsRenderer = {
 
         const state = entry
           ? entry.whisper
-            ? WhisperAligner.wordState(entry, currentTime)
+            ? WhisperAligner.wordState(entry, currentTime, nextEntry)
             : LyricsOnsetMapper.wordState(entry, currentTime, nextEntry)
           : "future";
         const progress = entry

@@ -4,7 +4,7 @@
  */
 const KaraokeClock = {
   MIN_WORD_SEC: 0.09,
-  LINGER_SEC: 0.28,
+  INTER_WORD_GAP_SEC: 0.05,
 
   getSyncTime(audioTime, userOffset = 0) {
     return (audioTime ?? 0) + userOffset;
@@ -15,22 +15,20 @@ const KaraokeClock = {
     return t * t * (3 - 2 * t);
   },
 
-  /** Last schedule index whose start <= t (binary search). Clamps at ends. */
+  /** Index of word containing t, or -1 when t falls in an inter-word gap. */
   findActiveWordIndex(schedule, t) {
     if (!schedule?.length) return -1;
-    if (t <= schedule[0].start) return 0;
-
-    const last = schedule.length - 1;
-    if (t >= schedule[last].start) return last;
 
     let lo = 0;
-    let hi = last;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (schedule[mid].start <= t) lo = mid;
-      else hi = mid - 1;
+    let hi = schedule.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const w = schedule[mid];
+      if (t < w.start) hi = mid - 1;
+      else if (t > w.end) lo = mid + 1;
+      else return mid;
     }
-    return lo;
+    return -1;
   },
 
   findActiveWord(schedule, t) {
@@ -39,9 +37,18 @@ const KaraokeClock = {
   },
 
   findLineIndex(schedule, t) {
-    const word = this.findActiveWord(schedule, t);
-    if (!word) return 0;
-    return word.lineIndex ?? 0;
+    const idx = this.findActiveWordIndex(schedule, t);
+    if (idx >= 0) return schedule[idx].lineIndex ?? 0;
+
+    for (let i = schedule.length - 1; i >= 0; i--) {
+      if (schedule[i].start <= t) return schedule[i].lineIndex ?? 0;
+    }
+    return 0;
+  },
+
+  isInGap(schedule, t) {
+    if (!schedule?.length) return false;
+    return this.findActiveWordIndex(schedule, t) === -1 && t >= schedule[0].start;
   },
 
   wordProgress(entry, t) {
@@ -53,12 +60,18 @@ const KaraokeClock = {
     return this._smoothstep((t - entry.start) / span);
   },
 
-  wordState(entry, t) {
-    if (!entry) return "future";
-    if (t < entry.start) return "future";
-    if (t >= entry.end + this.LINGER_SEC) return "past";
-    if (t >= entry.end) return "linger";
-    return "active";
+  /**
+   * pending — before start
+   * active — sung window [start, end]
+   * gap — after end, before next word (filled, no highlight)
+   * done — after next word has started or trailing tail
+   */
+  wordState(entry, t, nextEntry = null) {
+    if (!entry) return "pending";
+    if (t < entry.start) return "pending";
+    if (t >= entry.start && t <= entry.end) return "active";
+    if (nextEntry && t > entry.end && t < nextEntry.start) return "gap";
+    return "done";
   },
 
   /** Group schedule entries by lineIndex for O(1) line word slices. */
