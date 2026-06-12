@@ -71,8 +71,8 @@ class ForcedAligner:
             ch for ch, idx in token_dict.items() if idx != 0 and ch != "*"
         }
 
-    def _load_mono(self, path: Path):
-        torch = self._torch
+    def load_waveform(self, path: Path):
+        """Load a file as a mono waveform tensor at the model sample rate."""
         ta = self._torchaudio
         waveform, sr = ta.load(str(path))
         if waveform.shape[0] > 1:
@@ -81,32 +81,30 @@ class ForcedAligner:
             waveform = ta.functional.resample(waveform, sr, self.sample_rate)
         return waveform.to(self.device)
 
-    def align(self, vocals_path: Path, words: list[str]) -> list[dict]:
-        """Return ``[{word, start, end, matched}]`` for the given word list.
+    def align_waveform(self, waveform, words: list[str]) -> list[dict]:
+        """Force-align ``words`` to an in-memory mono waveform.
 
-        Words that normalize to empty (pure punctuation, ad-libs like "—") get a
-        ``None`` time slot here and are interpolated by the schedule builder.
+        Returns ``[{word, start, end, matched}]`` with times relative to the start of
+        the given waveform. Words that normalize to empty (pure punctuation, ad-libs)
+        get a ``None`` slot and are interpolated by the schedule builder.
         """
         torch = self._torch
         norm = [_normalize_word(w, self.allowed) for w in words]
         align_idx = [i for i, n in enumerate(norm) if n]
         transcript = [norm[i] for i in align_idx]
-        if not transcript:
-            return [{"word": w, "start": None, "end": None, "matched": False} for w in words]
+        results: list[dict] = [
+            {"word": w, "start": None, "end": None, "matched": False} for w in words
+        ]
+        if not transcript or waveform.shape[1] < self.sample_rate * 0.1:
+            return results
 
-        waveform = self._load_mono(vocals_path)
         total_sec = waveform.shape[1] / self.sample_rate
-
         with torch.inference_mode():
             emission, _ = self.model(waveform)
             token_spans = self.aligner(emission[0], self.tokenizer(transcript))
 
         num_frames = emission.shape[1]
         sec_per_frame = total_sec / max(1, num_frames)
-
-        results: list[dict] = [
-            {"word": w, "start": None, "end": None, "matched": False} for w in words
-        ]
         for spans, orig_i in zip(token_spans, align_idx):
             if not spans:
                 continue
@@ -122,6 +120,10 @@ class ForcedAligner:
                 "score": round(float(score / denom), 4),
             }
         return results
+
+    def align(self, vocals_path: Path, words: list[str]) -> list[dict]:
+        """Force-align ``words`` to a whole audio file (single global pass)."""
+        return self.align_waveform(self.load_waveform(vocals_path), words)
 
 
 def _interpolate_missing(aligned: list[dict]) -> None:
@@ -193,6 +195,111 @@ def _snap_onsets(schedule: list[dict], vocals_path: Path, *, lead: float = ONSET
         prev_end = new_end
 
 
+def asr_anchor_word_times(
+    flat_tokens: list[str], asr_words: list[dict], duration: float
+) -> list[float]:
+    """Rough per-word start times from a global, monotonic lyric<->ASR alignment.
+
+    A single Needleman-Wunsch pass over the whole song matches lyric words to whisper
+    words in time order, so repeated choruses map to their correct occurrence. Unmatched
+    lyric words are linearly interpolated between matched anchors.
+    """
+    from .align import _align_line_tokens
+
+    n = len(flat_tokens)
+    if not asr_words or n == 0:
+        return [duration * i / max(1, n) for i in range(n)]
+
+    pairs = _align_line_tokens(flat_tokens, asr_words)
+    times: list[float | None] = [None] * n
+    for p in pairs:
+        if p["asr_idx"] >= 0:
+            times[p["lyric_idx"]] = float(asr_words[p["asr_idx"]]["start"])
+
+    anchors = [i for i, t in enumerate(times) if t is not None]
+    if not anchors:
+        return [duration * i / max(1, n) for i in range(n)]
+
+    first, last = anchors[0], anchors[-1]
+    for i in range(first):
+        times[i] = max(0.0, times[first] * (i + 1) / (first + 1))
+    for i in range(last + 1, n):
+        frac = (i - last) / max(1, n - last)
+        times[i] = times[last] + (duration - times[last]) * frac
+    for a in range(len(anchors) - 1):
+        i0, i1 = anchors[a], anchors[a + 1]
+        t0, t1 = times[i0], times[i1]
+        for k in range(i0 + 1, i1):
+            times[k] = t0 + (t1 - t0) * (k - i0) / (i1 - i0)
+    # enforce monotonic non-decreasing
+    out: list[float] = []
+    cur = 0.0
+    for t in times:
+        cur = max(cur, float(t if t is not None else cur))
+        out.append(cur)
+    return out
+
+
+def windows_from_word_times(
+    word_times: list[float],
+    owner: list[tuple[int, int]],
+    num_lines: int,
+    duration: float,
+    *,
+    pad: float = 1.0,
+) -> list[tuple[float, float]]:
+    """Per-line [t0, t1] window from rough per-word start times."""
+    spans: dict[int, list[float]] = {}
+    for (li, _wi), t in zip(owner, word_times):
+        spans.setdefault(li, []).append(t)
+    windows: list[tuple[float, float]] = []
+    last = 0.0
+    for li in range(num_lines):
+        ts = spans.get(li)
+        if ts:
+            lo, hi = min(ts), max(ts)
+        else:
+            lo = hi = last
+        t0 = max(0.0, lo - pad)
+        t1 = min(duration, hi + pad + 1.5)  # extra tail room for held notes
+        windows.append((t0, max(t1, t0 + 0.4)))
+        last = hi
+    return windows
+
+
+def windows_from_schedule(
+    rough: list[dict], num_lines: int, duration: float, *, pad: float = 0.6
+) -> list[tuple[float, float]]:
+    """Derive a per-line [t0, t1] audio window from a coarse (whisper) schedule.
+
+    Used to anchor forced alignment: aligning each line within a short window keeps a
+    long, melismatic song from drifting and resolves repeated choruses correctly.
+    """
+    bounds: list[tuple[float, float] | None] = [None] * num_lines
+    by_line: dict[int, list[dict]] = {}
+    for w in rough:
+        by_line.setdefault(int(w["lineIndex"]), []).append(w)
+    for li, words in by_line.items():
+        if 0 <= li < num_lines and words:
+            bounds[li] = (
+                min(float(w["start"]) for w in words),
+                max(float(w["end"]) for w in words),
+            )
+    # Fill gaps for lines the rough pass skipped, then pad and clamp.
+    last_end = 0.0
+    windows: list[tuple[float, float]] = []
+    for li in range(num_lines):
+        b = bounds[li]
+        if b is None:
+            nxt = next((bounds[j][0] for j in range(li + 1, num_lines) if bounds[j]), duration)
+            b = (last_end, max(last_end + 1.0, nxt))
+        t0 = max(0.0, b[0] - pad)
+        t1 = min(duration, b[1] + pad)
+        windows.append((t0, max(t1, t0 + 0.3)))
+        last_end = b[1]
+    return windows
+
+
 def build_forced_schedule(
     timed_lines: list[dict],
     vocals_path: Path,
@@ -200,9 +307,15 @@ def build_forced_schedule(
     device: str = "cpu",
     refine_onsets: bool = True,
     onset_lead: float = ONSET_LEAD_SEC,
+    line_windows: list[tuple[float, float]] | None = None,
     aligner: ForcedAligner | None = None,
 ) -> list[dict]:
-    """Force-align known lyrics to the vocal stem and emit a word_schedule list."""
+    """Force-align known lyrics to the vocal stem and emit a word_schedule list.
+
+    When ``line_windows`` is given (one [t0, t1] per line, e.g. from whisper anchors),
+    each line is aligned within its own audio slice; otherwise a single global pass is
+    used (fine for short clips, drifts on long songs).
+    """
     line_tokens: list[list[str]] = [_tokenize(line.get("text", "")) for line in timed_lines]
     flat_words: list[str] = []
     owner: list[tuple[int, int]] = []  # (lineIndex, wordIndex)
@@ -215,7 +328,25 @@ def build_forced_schedule(
         return []
 
     aligner = aligner or ForcedAligner(device=device)
-    aligned = aligner.align(vocals_path, flat_words)
+
+    if line_windows is not None:
+        waveform = aligner.load_waveform(vocals_path)
+        sr = aligner.sample_rate
+        aligned = []
+        for li, tokens in enumerate(line_tokens):
+            if not tokens:
+                continue
+            t0, t1 = line_windows[li]
+            seg = waveform[:, int(t0 * sr) : int(t1 * sr)]
+            seg_aligned = aligner.align_waveform(seg, tokens)
+            for a in seg_aligned:
+                if a["start"] is not None:
+                    a["start"] = round(a["start"] + t0, 3)
+                    a["end"] = round(a["end"] + t0, 3)
+            aligned.extend(seg_aligned)
+    else:
+        aligned = aligner.align(vocals_path, flat_words)
+
     _interpolate_missing(aligned)
 
     schedule: list[dict] = []

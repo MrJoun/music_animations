@@ -83,6 +83,13 @@ python analyze_song.py "../Artist - Title.mp3" --lyrics "../lyrics.txt" --align 
 # nudge all forced onsets a touch earlier/later (seconds): --lyric-lead 0.0
 ```
 
+**Anchoring (`--anchor`, default `whisper`).** A single global forced-alignment pass
+drifts on long, melismatic songs with repeated choruses. By default the forced path first
+runs faster-whisper, does a global monotonic word match (repeat-safe), and **forced-aligns
+each lyric line within its own short audio window** — the same idea as WhisperX. Use
+`--anchor none` for one global pass (best for short, clean clips like the validation
+fixture below).
+
 Forced alignment writes the same `word_schedule.json` shape the browser already renders, so no UI change is needed. The chosen method is recorded in `manifest.json` under `lyrics.alignMethod`.
 
 ### Validating alignment accuracy
@@ -93,15 +100,19 @@ lyrics file with **exact known word times**, runs the pipeline, and measures ons
 
 ```bash
 python tools/make_ground_truth.py yebba_far_away_lyrics.txt --out tools/fixtures/yebba
-python tools/analyze_song.py tools/fixtures/yebba.mp3 --lyrics yebba_far_away_lyrics.txt
+# synthetic TTS is adversarial for ASR, so isolate the aligner with a global pass:
+python tools/analyze_song.py tools/fixtures/yebba.mp3 --lyrics yebba_far_away_lyrics.txt \
+       --anchor none
 python tools/eval_alignment.py tools/fixtures/yebba.analysis/word_schedule.json \
        tools/fixtures/yebba.ground_truth.json
 ```
 
-On this fixture (375 words), `--align forced` reaches ~16 ms median onset error with a
+On this fixture (375 words), forced alignment reaches ~16 ms median onset error with a
 near-zero bias (97% of words within 80 ms) — well under the ~80–100 ms perceptual
-threshold, so highlights are neither delayed nor ahead. `tools/plot_alignment.py` renders
-the vocal envelope with word onsets marked for a visual check.
+threshold, so highlights are neither delayed nor ahead. On real recordings (e.g. the
+included `Yebba - Far Away.mp3`) use the default `--anchor whisper`; verify visually with
+`tools/plot_alignment.py "Yebba - Far Away.analysis/stems/vocals.wav" \
+"Yebba - Far Away.analysis/word_schedule.json" --start 0 --end 22 --out check.png`.
 
 For sharper word boundaries on the `whisper` path, try `--model small.en` (slower than `base.en`, better syllable edges).
 

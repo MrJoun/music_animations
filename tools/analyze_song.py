@@ -88,17 +88,70 @@ def _resolve_lyrics(
     }
 
 
+def _asr_words(
+    out_dir: Path,
+    stem_paths: dict[str, Path],
+    envelopes: dict,
+    *,
+    model_size: str,
+    device: str,
+    force: bool,
+) -> list[dict]:
+    """faster-whisper word timestamps on the vocal stem (cached in transcript.json)."""
+    transcript_path = out_dir / "transcript.json"
+    if transcript_path.exists() and not force:
+        words = json.loads(transcript_path.read_text(encoding="utf-8")).get("words", [])
+    else:
+        words = transcribe_vocals(stem_paths["vocals"], model_size=model_size, device=device)
+        write_transcript(out_dir, words)
+    words = refine_transcript_words(words, envelopes, vocals_path=stem_paths["vocals"])
+    write_transcript(out_dir, words)
+    return words
+
+
 def _forced_schedule(
     timed_lines: list[dict],
-    vocals_path: Path,
+    stem_paths: dict[str, Path],
+    envelopes: dict,
     *,
     device: str,
     onset_lead: float,
+    anchor: str,
+    duration: float,
+    model_size: str,
+    force: bool,
+    out_dir: Path,
 ) -> list[dict]:
-    from pipeline.forced_align import build_forced_schedule
+    """Forced alignment, optionally anchored per-line by whisper segments."""
+    from pipeline.align import _tokenize
+    from pipeline.forced_align import (
+        asr_anchor_word_times,
+        build_forced_schedule,
+        windows_from_word_times,
+    )
+
+    line_windows = None
+    if anchor == "whisper":
+        asr = _asr_words(
+            out_dir, stem_paths, envelopes, model_size=model_size, device=device, force=force
+        )
+        flat_tokens: list[str] = []
+        owner: list[tuple[int, int]] = []
+        for li, line in enumerate(timed_lines):
+            for wi, tok in enumerate(_tokenize(line.get("text", ""))):
+                flat_tokens.append(tok)
+                owner.append((li, wi))
+        word_times = asr_anchor_word_times(flat_tokens, asr, duration)
+        line_windows = windows_from_word_times(
+            word_times, owner, len(timed_lines), duration
+        )
 
     return build_forced_schedule(
-        timed_lines, vocals_path, device=device, onset_lead=onset_lead
+        timed_lines,
+        stem_paths["vocals"],
+        device=device,
+        onset_lead=onset_lead,
+        line_windows=line_windows,
     )
 
 
@@ -112,15 +165,9 @@ def _whisper_schedule(
     device: str,
     force: bool,
 ) -> list[dict]:
-    transcript_path = out_dir / "transcript.json"
-    if transcript_path.exists() and not force:
-        words = json.loads(transcript_path.read_text(encoding="utf-8")).get("words", [])
-    else:
-        words = transcribe_vocals(stem_paths["vocals"], model_size=model_size, device=device)
-        write_transcript(out_dir, words)
-    words = refine_transcript_words(words, envelopes, vocals_path=stem_paths["vocals"])
-    write_transcript(out_dir, words)
-
+    words = _asr_words(
+        out_dir, stem_paths, envelopes, model_size=model_size, device=device, force=force
+    )
     schedule = build_schedule(timed_lines, words, envelopes=envelopes)
     return refine_word_schedule(schedule, envelopes, vocals_path=stem_paths["vocals"])
 
@@ -139,6 +186,8 @@ def _build_background_cmd(args: argparse.Namespace, audio_path: Path) -> list[st
         cmd += ["--device", args.device]
     if args.align != "forced":
         cmd += ["--align", args.align]
+    if args.anchor != "whisper":
+        cmd += ["--anchor", args.anchor]
     if args.lyric_lead != 0.02:
         cmd += ["--lyric-lead", str(args.lyric_lead)]
     if args.force:
@@ -166,6 +215,13 @@ def main() -> int:
         default=0.02,
         dest="lyric_lead",
         help="Seconds to nudge forced-aligned onsets (default: 0.02)",
+    )
+    parser.add_argument(
+        "--anchor",
+        default="whisper",
+        choices=["whisper", "none"],
+        help="Forced-align anchoring: 'whisper' windows each line by ASR (robust on long "
+        "songs, default); 'none' runs one global pass (best for short clips).",
     )
     parser.add_argument("--force", action="store_true", help="Re-run even if manifest exists")
     parser.add_argument(
@@ -230,9 +286,19 @@ def main() -> int:
         schedule: list[dict] | None = None
         if args.align in ("forced", "hybrid"):
             try:
-                print("Step 3/4: CTC forced alignment (torchaudio MMS_FA)…")
+                anchor_note = "whisper-anchored" if args.anchor == "whisper" else "global"
+                print(f"Step 3/4: CTC forced alignment (torchaudio MMS_FA, {anchor_note})…")
                 schedule = _forced_schedule(
-                    timed_lines, stem_paths["vocals"], device=args.device, onset_lead=args.lyric_lead
+                    timed_lines,
+                    stem_paths,
+                    envelopes,
+                    device=args.device,
+                    onset_lead=args.lyric_lead,
+                    anchor=args.anchor,
+                    duration=duration,
+                    model_size=args.model,
+                    force=args.force,
+                    out_dir=out_dir,
                 )
                 align_method = "forced"
             except Exception as err:  # noqa: BLE001 - fall back to whisper on any failure
